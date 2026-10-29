@@ -1,18 +1,38 @@
 {
   "name": "agent-watch",
   "displayName": "Agent Watch",
-  "description": "Tells you when Claude Code or Codex needs your attention. Zero setup: reads the agents' local session logs.",
-  "version": "0.1.0",
+  "description": "A little cat that tells you when Claude Code or Codex needs your attention. Zero setup.",
+  "version": "0.4.0",
   "publisher": "local",
   "license": "UNLICENSED",
-  "engines": { "vscode": "^1.90.0" },
-  "categories": ["Other"],
-  "activationEvents": ["onStartupFinished"],
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
-      { "command": "agentWatch.showSessions", "title": "Agent Watch: Show Agent Sessions" },
-      { "command": "agentWatch.toggleMute", "title": "Agent Watch: Mute/Unmute Notifications" }
+      {
+        "command": "agentWatch.showSessions",
+        "title": "Agent Watch: Show Agent Sessions"
+      },
+      {
+        "command": "agentWatch.toggleMute",
+        "title": "Agent Watch: Mute/Unmute Notifications"
+      },
+      {
+        "command": "agentWatch.showBuddy",
+        "title": "Agent Watch: Show Buddy"
+      },
+      {
+        "command": "agentWatch.testVoice",
+        "title": "Agent Watch: Test Cat Voice"
+      }
     ],
     "configuration": {
       "title": "Agent Watch",
@@ -33,8 +53,55 @@
           "type": "boolean",
           "default": true,
           "description": "Also notify when an agent finishes its turn (not only when it needs approval or input)."
+        },
+        "agentWatch.buddy": {
+          "type": "string",
+          "enum": [
+            "cat",
+            "robot"
+          ],
+          "enumDescriptions": [
+            "A friendly cat",
+            "A friendly robot"
+          ],
+          "default": "cat",
+          "description": "Which character lives in the Agent Buddy panel."
+        },
+        "agentWatch.speakAloud": {
+          "type": "boolean",
+          "default": true,
+          "description": "Play sound alerts (meow and/or voice, see Voice setting)."
+        },
+        "agentWatch.showPopups": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show VS Code pop-up notifications for alerts."
+        },
+        "agentWatch.voice": {
+          "type": "string",
+          "enum": [
+            "cat",
+            "meow",
+            "plain"
+          ],
+          "enumDescriptions": [
+            "Meow, then a squeaky cat voice with cat puns",
+            "Only a meow sound, no words",
+            "Normal computer voice, no meow"
+          ],
+          "default": "cat",
+          "description": "How the buddy sounds when it speaks alerts."
         }
       }
+    },
+    "views": {
+      "explorer": [
+        {
+          "type": "webview",
+          "id": "agentWatch.buddy",
+          "name": "Agent Cat"
+        }
+      ]
     }
   },
   "scripts": {

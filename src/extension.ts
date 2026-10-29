@@ -2,22 +2,19 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { BuddyViewProvider } from './buddy';
+import { STATUS_FACES, buddyStatus, meowFor, spokenAlert } from './buddyLines';
+import { AGENT_LABEL, STATE_LABEL, ago, folderName } from './labels';
 import { AgentState } from './parsers';
+import { VoiceStyle, announce } from './speech';
 import { Session, SessionWatcher } from './watcher';
 
 const POLL_MS = 2000;
+const ANIMATION_MS = 800;
 // Windows that don't own the session's folder wait this long before trying to claim a notification,
 // so the window that does own it gets to show it.
 const UNOWNED_NOTIFY_DELAY_MS = 1500;
 const CLAIM_DIR = path.join(os.tmpdir(), 'agent-watch-claims');
-
-const AGENT_LABEL = { claude: 'Claude', codex: 'Codex' } as const;
-const STATE_LABEL: Record<AgentState, string> = {
-  working: 'working',
-  needs_approval: 'may need approval',
-  needs_input: 'waiting for you',
-  done: 'finished',
-};
 
 export function activate(context: vscode.ExtensionContext) {
   const config = () => vscode.workspace.getConfiguration('agentWatch');
@@ -32,23 +29,42 @@ export function activate(context: vscode.ExtensionContext) {
   let firstScan = true;
 
   const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
-  status.command = 'agentWatch.showSessions';
+  status.command = 'agentWatch.showBuddy';
   status.show();
 
-  const render = () => {
-    const waiting = sessions.filter((s) => s.state === 'needs_approval' || s.state === 'needs_input');
-    const working = sessions.filter((s) => s.state === 'working').length;
-    const mute = muted ? '$(bell-slash) ' : '';
-    if (waiting.length > 0) {
-      status.text = `${mute}$(bell-dot) ${waiting.length} agent${waiting.length > 1 ? 's' : ''} waiting`;
-      status.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
-    } else {
-      status.text = working > 0 ? `${mute}$(sync~spin) ${working} working` : `${mute}$(check) Agents idle`;
-      status.backgroundColor = undefined;
+  const toggleMute = async () => {
+    muted = !muted;
+    await context.globalState.update('muted', muted);
+    render();
+    vscode.window.showInformationMessage(`Agent Watch alerts ${muted ? 'muted' : 'on'}.`);
+  };
+
+  const voiceStyle = () => config().get<VoiceStyle>('voice', 'cat');
+  const onPoke = () => {
+    if (!muted && config().get<boolean>('speakAloud', true) && voiceStyle() !== 'plain') {
+      announce('hello', '', 'meow');
     }
+  };
+
+  const buddy = new BuddyViewProvider(context.extensionUri, { openFolder, toggleMute, onPoke });
+
+  // The status bar cat is always visible; its face alternates between two frames.
+  let frame = 0;
+  const renderStatus = () => {
+    const { mood, short } = buddyStatus(sessions);
+    const mute = muted ? '$(bell-slash) ' : '';
+    status.text = `${mute}${STATUS_FACES[mood][frame]} ${short}`;
+    status.backgroundColor =
+      mood === 'alert' ? new vscode.ThemeColor('statusBarItem.warningBackground') : undefined;
+  };
+
+  const render = () => {
+    renderStatus();
     status.tooltip = sessions.length
-      ? sessions.map((s) => `${AGENT_LABEL[s.agent]} · ${folderName(s)} · ${STATE_LABEL[s.state]}`).join('\n')
-      : 'No active Claude Code or Codex sessions';
+      ? sessions.map((s) => `${AGENT_LABEL[s.agent]} · ${folderName(s)} · ${STATE_LABEL[s.state]}`).join('\n') +
+        '\n\nClick to see the big cat'
+      : 'No active Claude Code or Codex sessions. Click to see the big cat';
+    buddy.update(sessions, muted);
   };
 
   const tick = () => {
@@ -78,6 +94,11 @@ export function activate(context: vscode.ExtensionContext) {
     const claimId = `${s.key}-${s.state}-${Math.floor(s.lastActivity)}`;
     const show = () => {
       if (!claim(claimId)) return; // another window already showed it
+      if (config().get<boolean>('speakAloud', true)) {
+        const style = voiceStyle();
+        announce(meowFor(s.state), spokenAlert(s, style !== 'plain'), style);
+      }
+      if (!config().get<boolean>('showPopups', true)) return;
       const msg = `${AGENT_LABEL[s.agent]} ${STATE_LABEL[s.state]} — ${folderName(s)}`;
       const actions = owned || !s.cwd ? [] : ['Open project'];
       vscode.window.showInformationMessage(msg, ...actions).then((choice) => {
@@ -89,12 +110,19 @@ export function activate(context: vscode.ExtensionContext) {
   };
 
   const timer = setInterval(tick, POLL_MS);
+  const animation = setInterval(() => {
+    frame = 1 - frame;
+    renderStatus();
+  }, ANIMATION_MS);
   cleanupClaims();
   tick();
 
   context.subscriptions.push(
     status,
     { dispose: () => clearInterval(timer) },
+    { dispose: () => clearInterval(animation) },
+    vscode.window.registerWebviewViewProvider(BuddyViewProvider.viewId, buddy),
+    vscode.workspace.onDidChangeConfiguration((e) => e.affectsConfiguration('agentWatch') && render()),
     vscode.commands.registerCommand('agentWatch.showSessions', async () => {
       if (sessions.length === 0) {
         vscode.window.showInformationMessage('Agent Watch: no active Claude Code or Codex sessions.');
@@ -111,20 +139,22 @@ export function activate(context: vscode.ExtensionContext) {
       );
       if (pick?.session.cwd) openFolder(pick.session.cwd);
     }),
-    vscode.commands.registerCommand('agentWatch.toggleMute', async () => {
-      muted = !muted;
-      await context.globalState.update('muted', muted);
-      render();
-      vscode.window.showInformationMessage(`Agent Watch notifications ${muted ? 'muted' : 'on'}.`);
+    vscode.commands.registerCommand('agentWatch.toggleMute', toggleMute),
+    vscode.commands.registerCommand('agentWatch.showBuddy', () =>
+      vscode.commands.executeCommand(`${BuddyViewProvider.viewId}.focus`),
+    ),
+    vscode.commands.registerCommand('agentWatch.testVoice', () => {
+      const style = voiceStyle();
+      const text =
+        style === 'plain'
+          ? 'Hi! I am your agent buddy. I will tell you when Claude or Codex needs you.'
+          : 'Meow! I am your agent cat. I will tell you when Claude or Codex needs you. Purr.';
+      announce('hello', text, style);
     }),
   );
 }
 
 export function deactivate() {}
-
-function folderName(s: Session): string {
-  return s.cwd ? path.basename(s.cwd) : s.sessionId.slice(0, 8);
-}
 
 function stateIcon(state: AgentState): string {
   switch (state) {
@@ -137,13 +167,6 @@ function stateIcon(state: AgentState): string {
     default:
       return '$(sync)';
   }
-}
-
-function ago(ms: number): string {
-  const sec = Math.max(0, Math.round((Date.now() - ms) / 1000));
-  if (sec < 60) return `${sec}s ago`;
-  const min = Math.round(sec / 60);
-  return min < 60 ? `${min}m ago` : `${Math.round(min / 60)}h ago`;
 }
 
 function ownsFolder(cwd?: string): boolean {

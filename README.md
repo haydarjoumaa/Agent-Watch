@@ -6,15 +6,19 @@ A VS Code extension that tells you when **Claude Code** or **Codex** needs your 
 
 ## What you get
 
-- **Status bar** (bottom left): `Agents idle`, `2 working`, or `1 agent waiting` (highlighted).
-  Hover to see every session; click to pick one and jump to its project.
-- **Notifications** when an agent:
-  - may need approval for a tool call,
-  - is asking you a question (e.g. AskUserQuestion / plan approval),
-  - finished its turn (can be turned off with `agentWatch.notifyWhenFinished`).
-
-With several VS Code windows open, each event pops up once, in the window that has that
-project open (or another window if none does).
+- **Status bar cat** (always visible, bottom left): a little animated cat face that shows what
+  your agents are doing, e.g. `(=^･ω･^=) Claude busy · my-app` or `(=ↀωↀ=)! Codex needs you · api`.
+  Click it to open the big cat.
+- **Agent Cat** (in the Explorer sidebar): a bigger animated cat with a speech bubble.
+  - sleeps when nothing is running, bobs along while agents work,
+  - jumps and waves when an agent needs you, celebrates when one finishes,
+  - click the bubble to open that project, click the cat to poke it.
+  - Tip: drag the "Agent Cat" view to the right-hand (secondary) sidebar to keep it on screen all the time.
+- **Cat voice**: alerts are announced with a synthesized meow, then a squeaky cat voice with
+  cat puns ("Mrrow! Claude needs your approval in my app." / "Codex finished. Purrfect!").
+  Poking the big cat makes it meow. Uses your computer's built-in voice
+  (`spd-say` on Linux, `say` on macOS, Windows speech); the meow is generated, no audio files.
+  Try it: **Agent Watch: Test Cat Voice**.
 
 ## How it works
 
@@ -45,8 +49,12 @@ rejects anything, and sends nothing over the network.
 | `agentWatch.approvalDelaySeconds` | 5 | Quiet time before a pending tool call counts as "may need approval" |
 | `agentWatch.staleAfterMinutes` | 30 | Hide sessions idle longer than this |
 | `agentWatch.notifyWhenFinished` | true | Also notify when an agent finishes a turn |
+| `agentWatch.buddy` | cat | `cat` or `robot` |
+| `agentWatch.speakAloud` | true | Play sound alerts |
+| `agentWatch.voice` | cat | `cat` (meow + cat voice), `meow` (meow only), `plain` (normal voice) |
+| `agentWatch.showPopups` | true | Show VS Code pop-up notifications |
 
-Command palette: **Agent Watch: Show Agent Sessions**, **Agent Watch: Mute/Unmute Notifications**.
+Command palette: **Agent Watch: Show Buddy**, **Show Agent Sessions**, **Mute/Unmute Notifications**, **Test Cat Voice**.
 
 ## Develop
 
@@ -55,7 +63,7 @@ npm install
 npm run compile
 npm test          # parser tests
 npm run package   # builds agent-watch-<version>.vsix
-code --install-extension agent-watch-0.1.0.vsix
+code --install-extension agent-watch-0.4.0.vsix
 ```
 
 Press F5 in VS Code to try it in an Extension Development Host.
