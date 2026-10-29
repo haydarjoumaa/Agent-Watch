@@ -1,0 +1,54 @@
+{
+  "name": "agent-watch",
+  "displayName": "Agent Watch",
+  "description": "Tells you when Claude Code or Codex needs your attention. Zero setup: reads the agents' local session logs.",
+  "version": "0.1.0",
+  "publisher": "local",
+  "license": "UNLICENSED",
+  "engines": { "vscode": "^1.90.0" },
+  "categories": ["Other"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      { "command": "agentWatch.showSessions", "title": "Agent Watch: Show Agent Sessions" },
+      { "command": "agentWatch.toggleMute", "title": "Agent Watch: Mute/Unmute Notifications" }
+    ],
+    "configuration": {
+      "title": "Agent Watch",
+      "properties": {
+        "agentWatch.approvalDelaySeconds": {
+          "type": "number",
+          "default": 5,
+          "minimum": 1,
+          "description": "How long a tool call may sit unanswered before the agent is shown as possibly needing approval."
+        },
+        "agentWatch.staleAfterMinutes": {
+          "type": "number",
+          "default": 30,
+          "minimum": 1,
+          "description": "Ignore sessions with no activity for this long."
+        },
+        "agentWatch.notifyWhenFinished": {
+          "type": "boolean",
+          "default": true,
+          "description": "Also notify when an agent finishes its turn (not only when it needs approval or input)."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p .",
+    "watch": "tsc -watch -p .",
+    "test": "vitest run",
+    "vscode:prepublish": "npm run compile",
+    "package": "vsce package --allow-missing-repository --skip-license"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.90.0",
+    "@vscode/vsce": "^3.2.0",
+    "typescript": "^5.4.0",
+    "vitest": "^2.1.0"
+  }
+}
