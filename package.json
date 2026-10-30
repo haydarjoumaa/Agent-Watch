@@ -1,8 +1,8 @@
 {
   "name": "agent-watch",
   "displayName": "Agent Watch",
-  "description": "A little cat that tells you when Claude Code or Codex needs your attention. Zero setup.",
-  "version": "0.4.0",
+  "description": "A little cat, gym coach or robot that tells you when Claude Code or Codex needs your attention. Zero setup.",
+  "version": "0.7.0",
   "publisher": "local",
   "license": "UNLICENSED",
   "engines": {
@@ -31,7 +31,11 @@
       },
       {
         "command": "agentWatch.testVoice",
-        "title": "Agent Watch: Test Cat Voice"
+        "title": "Agent Watch: Test Buddy Voice"
+      },
+      {
+        "command": "agentWatch.installNaturalVoice",
+        "title": "Agent Watch: Install Natural Voice"
       }
     ],
     "configuration": {
@@ -52,20 +56,22 @@
         "agentWatch.notifyWhenFinished": {
           "type": "boolean",
           "default": true,
-          "description": "Also notify when an agent finishes its turn (not only when it needs approval or input)."
+          "description": "Also alert when an agent finishes its turn (a soft meow and a pop-up, no spoken words)."
         },
         "agentWatch.buddy": {
           "type": "string",
           "enum": [
             "cat",
+            "coach",
             "robot"
           ],
           "enumDescriptions": [
-            "A friendly cat",
-            "A friendly robot"
+            "A friendly cat: meows and purrs",
+            "A gym coach: lifts weights while agents work, blows the whistle when they need you",
+            "A robot: beeps and boops"
           ],
           "default": "cat",
-          "description": "Which character lives in the Agent Buddy panel."
+          "description": "Which character watches your agents for you."
         },
         "agentWatch.speakAloud": {
           "type": "boolean",
@@ -80,17 +86,46 @@
         "agentWatch.voice": {
           "type": "string",
           "enum": [
-            "cat",
-            "meow",
+            "character",
+            "sound",
             "plain"
           ],
           "enumDescriptions": [
-            "Meow, then a squeaky cat voice with cat puns",
-            "Only a meow sound, no words",
-            "Normal computer voice, no meow"
+            "The character's sound, then its voice (cat: meow, coach: whistle, robot: beeps)",
+            "Only the character's sound, no words",
+            "Normal computer voice, no sound effects"
           ],
-          "default": "cat",
-          "description": "How the buddy sounds when it speaks alerts."
+          "default": "character",
+          "description": "How your buddy sounds when it alerts you."
+        },
+        "agentWatch.quietWhenWatching": {
+          "type": "boolean",
+          "default": true,
+          "description": "Don't play the \"finished\" sound when you are already looking at the VS Code window where that agent runs. Approvals and questions always make a sound."
+        },
+        "agentWatch.quietHours": {
+          "type": "string",
+          "default": "",
+          "pattern": "^$|^\\d{1,2}:\\d{2}-\\d{1,2}:\\d{2}$",
+          "patternErrorMessage": "Use HH:MM-HH:MM, e.g. 22:00-08:00, or leave empty.",
+          "markdownDescription": "No voice during these hours, e.g. `22:00-08:00`. Leave empty to turn off. Pop-ups and the cat still update."
+        },
+        "agentWatch.volume": {
+          "type": "number",
+          "default": 30,
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Volume of the meow and cat voice, 0–100."
+        },
+        "agentWatch.userName": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "What your buddy calls you. Leave empty to use the first name from your Git `user.name`; set to `-` to not use a name."
+        },
+        "agentWatch.naturalVoice": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Use the natural-sounding voice (Piper) once installed with **Agent Watch: Install Natural Voice**. Turn off to use your system voice."
         }
       }
     },

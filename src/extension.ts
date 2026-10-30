@@ -3,14 +3,19 @@ import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { BuddyViewProvider } from './buddy';
-import { STATUS_FACES, buddyStatus, meowFor, spokenAlert } from './buddyLines';
+import { buddyStatus } from './buddyLines';
+import { character, plainHello, spokenAlert } from './characters';
 import { AGENT_LABEL, STATE_LABEL, ago, folderName } from './labels';
 import { AgentState } from './parsers';
-import { VoiceStyle, announce } from './speech';
+import { inQuietHours } from './quiet';
+import * as naturalVoice from './naturalVoice';
+import { announce, normalizeStyle, setNaturalVoiceDir } from './speech';
+import { detectUserName } from './userName';
 import { Session, SessionWatcher } from './watcher';
 
 const POLL_MS = 2000;
 const ANIMATION_MS = 800;
+const SOUND_COOLDOWN_MS = 30_000;
 // Windows that don't own the session's folder wait this long before trying to claim a notification,
 // so the window that does own it gets to show it.
 const UNOWNED_NOTIFY_DELAY_MS = 1500;
@@ -39,10 +44,20 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.window.showInformationMessage(`Agent Watch alerts ${muted ? 'muted' : 'on'}.`);
   };
 
-  const voiceStyle = () => config().get<VoiceStyle>('voice', 'cat');
+  const voiceStyle = () => normalizeStyle(config().get<string>('voice'));
+  const buddyChar = () => character(config().get<string>('buddy', 'cat'));
+  const volume = () => config().get<number>('volume', 30) / 100;
+  const detectedName = detectUserName();
+  // What the buddy calls you: the setting if given, else your Git name. "-" means don't use a name.
+  const userName = () => {
+    const set = config().get<string>('userName', '').trim();
+    return set === '-' ? '' : set || detectedName;
+  };
+  let lastSoundAt = 0;
   const onPoke = () => {
     if (!muted && config().get<boolean>('speakAloud', true) && voiceStyle() !== 'plain') {
-      announce('hello', '', 'meow');
+      const c = buddyChar();
+      announce(c.sounds.poke, '', 'sound', c.voice, volume());
     }
   };
 
@@ -53,7 +68,7 @@ export function activate(context: vscode.ExtensionContext) {
   const renderStatus = () => {
     const { mood, short } = buddyStatus(sessions);
     const mute = muted ? '$(bell-slash) ' : '';
-    status.text = `${mute}${STATUS_FACES[mood][frame]} ${short}`;
+    status.text = `${mute}${buddyChar().faces[mood][frame]} ${short}`;
     status.backgroundColor =
       mood === 'alert' ? new vscode.ThemeColor('statusBarItem.warningBackground') : undefined;
   };
@@ -94,9 +109,23 @@ export function activate(context: vscode.ExtensionContext) {
     const claimId = `${s.key}-${s.state}-${Math.floor(s.lastActivity)}`;
     const show = () => {
       if (!claim(claimId)) return; // another window already showed it
-      if (config().get<boolean>('speakAloud', true)) {
+      // Approvals and questions block the agent, so they always make a sound. "Finished" stays
+      // quiet when you're already looking at the window where that agent runs.
+      const watching =
+        s.state === 'done' &&
+        owned &&
+        vscode.window.state.focused &&
+        config().get<boolean>('quietWhenWatching', true);
+      const quietTime = inQuietHours(config().get<string>('quietHours', ''));
+      // Approvals always get through; anything else waits for a quiet gap since the last sound.
+      const tooSoon = s.state !== 'needs_approval' && Date.now() - lastSoundAt < SOUND_COOLDOWN_MS;
+      if (config().get<boolean>('speakAloud', true) && !watching && !quietTime && !tooSoon) {
+        lastSoundAt = Date.now();
         const style = voiceStyle();
-        announce(meowFor(s.state), spokenAlert(s, style !== 'plain'), style);
+        const c = buddyChar();
+        // "Finished" is good news, not urgent: just the character's sound, no words.
+        const text = s.state === 'done' && style !== 'plain' ? '' : spokenAlert(s, style === 'plain' ? undefined : c, userName());
+        if (s.state !== 'working') announce(c.sounds[s.state], text, style, c.voice, volume());
       }
       if (!config().get<boolean>('showPopups', true)) return;
       const msg = `${AGENT_LABEL[s.agent]} ${STATE_LABEL[s.state]} — ${folderName(s)}`;
@@ -115,6 +144,55 @@ export function activate(context: vscode.ExtensionContext) {
     renderStatus();
   }, ANIMATION_MS);
   cleanupClaims();
+
+  // Natural voice (Piper): lives in the extension's storage so updates don't re-download it.
+  const voiceDir = path.join(context.globalStorageUri.fsPath, 'natural-voice');
+  const applyVoiceSetting = () =>
+    setNaturalVoiceDir(config().get<boolean>('naturalVoice', true) ? voiceDir : undefined);
+  applyVoiceSetting();
+
+  let installing = false;
+  const installVoice = async () => {
+    if (installing) return;
+    if (!naturalVoice.isSupported()) {
+      vscode.window.showWarningMessage('Agent Watch: the natural voice is not available for this system.');
+      return;
+    }
+    installing = true;
+    try {
+      await vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title: 'Agent Watch: installing natural voice' },
+        (progress) => naturalVoice.install(voiceDir, (message) => progress.report({ message })),
+      );
+      await config().update('naturalVoice', true, vscode.ConfigurationTarget.Global);
+      applyVoiceSetting();
+      vscode.commands.executeCommand('agentWatch.testVoice');
+    } catch (err) {
+      vscode.window.showErrorMessage(`Agent Watch: couldn't install the natural voice. ${(err as Error).message}`);
+    } finally {
+      installing = false;
+    }
+  };
+
+  // Offer it once, to people who use the voice at all.
+  if (
+    naturalVoice.isSupported() &&
+    !naturalVoice.isInstalled(voiceDir) &&
+    config().get<boolean>('speakAloud', true) &&
+    voiceStyle() !== 'sound' &&
+    !context.globalState.get<boolean>('naturalVoiceOffered')
+  ) {
+    context.globalState.update('naturalVoiceOffered', true);
+    vscode.window
+      .showInformationMessage(
+        'Agent Watch: install a clearer, natural-sounding voice? (one-time download, about 90 MB)',
+        'Install',
+        'Not now',
+      )
+      .then((choice) => {
+        if (choice === 'Install') installVoice();
+      });
+  }
   tick();
 
   context.subscriptions.push(
@@ -122,7 +200,12 @@ export function activate(context: vscode.ExtensionContext) {
     { dispose: () => clearInterval(timer) },
     { dispose: () => clearInterval(animation) },
     vscode.window.registerWebviewViewProvider(BuddyViewProvider.viewId, buddy),
-    vscode.workspace.onDidChangeConfiguration((e) => e.affectsConfiguration('agentWatch') && render()),
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (!e.affectsConfiguration('agentWatch')) return;
+      applyVoiceSetting();
+      render();
+    }),
+    vscode.commands.registerCommand('agentWatch.installNaturalVoice', installVoice),
     vscode.commands.registerCommand('agentWatch.showSessions', async () => {
       if (sessions.length === 0) {
         vscode.window.showInformationMessage('Agent Watch: no active Claude Code or Codex sessions.');
@@ -145,11 +228,9 @@ export function activate(context: vscode.ExtensionContext) {
     ),
     vscode.commands.registerCommand('agentWatch.testVoice', () => {
       const style = voiceStyle();
-      const text =
-        style === 'plain'
-          ? 'Hi! I am your agent buddy. I will tell you when Claude or Codex needs you.'
-          : 'Meow! I am your agent cat. I will tell you when Claude or Codex needs you. Purr.';
-      announce('hello', text, style);
+      const c = buddyChar();
+      const text = style === 'plain' ? plainHello(userName()) : c.hello(userName());
+      announce(c.sounds.hello, text, style, c.voice, volume());
     }),
   );
 }

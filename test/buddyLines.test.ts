@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { buddyStatus, meowFor, spokenAlert } from '../src/buddyLines';
+import { buddyStatus } from '../src/buddyLines';
+import { CHARACTERS, character, spokenAlert } from '../src/characters';
 import type { AgentState } from '../src/parsers';
 import type { Session } from '../src/watcher';
 
@@ -39,8 +40,9 @@ describe('buddyStatus', () => {
 });
 
 describe('spokenAlert', () => {
-  it('speaks folder names without dashes', () => {
-    expect(spokenAlert(session('done', 'barber-platform', 'codex'))).toBe('Codex finished in barber platform.');
+  it('keeps plain lines short', () => {
+    expect(spokenAlert(session('done', 'barber-platform', 'codex'))).toBe('Codex is done.');
+    expect(spokenAlert(session('needs_approval', 'x'), undefined, 'Haydar')).toBe('Haydar, Claude needs your approval.');
   });
 
   it('says nothing for working sessions', () => {
@@ -48,15 +50,36 @@ describe('spokenAlert', () => {
   });
 });
 
-describe('cat voice', () => {
-  it('uses cat puns', () => {
-    expect(spokenAlert(session('done', 'api', 'codex'), true)).toBe('Codex finished in api. Purrfect!');
-    expect(spokenAlert(session('needs_approval', 'api'), true)).toBe('Mrrow! Claude needs your approval in api.');
+describe('characters', () => {
+  it('each character has its own wording', () => {
+    expect(spokenAlert(session('needs_approval', 'api'), CHARACTERS.cat, 'Haydar')).toBe('Haydar, Claude needs you. Meow!');
+    expect(spokenAlert(session('done', 'api', 'codex'), CHARACTERS.cat, 'Haydar')).toBe('Codex is done, Haydar. Purr!');
+    expect(spokenAlert(session('needs_approval', 'my-app'), CHARACTERS.coach, 'Haydar')).toBe("Haydar! Claude needs you. Let's go!");
+    expect(spokenAlert(session('done', 'api'), CHARACTERS.robot, 'Haydar')).toBe('Claude task complete, Haydar.');
   });
 
-  it('picks a meow per alert', () => {
-    expect(meowFor('needs_approval')).toBe('alert');
-    expect(meowFor('needs_input')).toBe('question');
-    expect(meowFor('done')).toBe('happy');
+  it('reads naturally without a name', () => {
+    expect(spokenAlert(session('needs_approval', 'api'), CHARACTERS.cat)).toBe('Claude needs you. Meow!');
+    expect(spokenAlert(session('needs_input', 'api'), CHARACTERS.coach)).toBe('Champ, Claude has a question!');
+    expect(CHARACTERS.coach.hello('')).toBe("Let's go, champ! I've got your agents.");
+    expect(CHARACTERS.cat.hello('Haydar')).toBe("Meow, Haydar! I'm watching your agents.");
+  });
+
+  it('keeps every spoken line short', () => {
+    for (const c of Object.values(CHARACTERS)) {
+      for (const say of Object.values(c.says)) expect(say('Claude', 'Alexandra').split(' ').length).toBeLessThanOrEqual(7);
+    }
+  });
+
+  it('every character has faces for every mood and sounds for every alert', () => {
+    for (const c of Object.values(CHARACTERS)) {
+      for (const mood of ['sleep', 'idle', 'working', 'alert', 'happy'] as const) expect(c.faces[mood]).toHaveLength(2);
+      for (const k of ['needs_approval', 'needs_input', 'done', 'hello', 'poke'] as const) expect(c.sounds[k]).toBeTruthy();
+    }
+  });
+
+  it('falls back to the cat for unknown settings', () => {
+    expect(character('unicorn').id).toBe('cat');
+    expect(character('coach').id).toBe('coach');
   });
 });

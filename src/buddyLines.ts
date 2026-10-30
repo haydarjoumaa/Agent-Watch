@@ -1,6 +1,4 @@
 import { AGENT_LABEL, folderName } from './labels';
-import type { MeowKind } from './meow';
-import type { AgentState } from './parsers';
 import type { Session } from './watcher';
 
 export type Mood = 'sleep' | 'idle' | 'working' | 'alert' | 'happy';
@@ -77,33 +75,3 @@ export function buddyStatus(sessions: Session[], now = Date.now()): BuddyStatus 
   }
   return { mood: 'sleep', line: 'Zzz… no agents running. Wake me when you start one.', short: 'napping' };
 }
-
-/** The sentence spoken aloud when a session changes into a state worth announcing. */
-export function spokenAlert(s: Session, cat = false): string {
-  const agent = AGENT_LABEL[s.agent];
-  const where = folderName(s).replace(/[-_]/g, ' ');
-  switch (s.state) {
-    case 'needs_approval':
-      return cat ? `Mrrow! ${agent} needs your approval in ${where}.` : `${agent} might need your approval in ${where}.`;
-    case 'needs_input':
-      return cat ? `${agent} has a question for you in ${where}. Meow?` : `${agent} is asking you a question in ${where}.`;
-    case 'done':
-      return cat ? `${agent} finished in ${where}. Purrfect!` : `${agent} finished in ${where}.`;
-    default:
-      return '';
-  }
-}
-
-/** Which meow fits each alert. */
-export function meowFor(state: AgentState): MeowKind {
-  return state === 'needs_approval' ? 'alert' : state === 'needs_input' ? 'question' : 'happy';
-}
-
-// Two-frame cat faces for the status bar, swapped on a timer so the cat looks alive.
-export const STATUS_FACES: Record<Mood, [string, string]> = {
-  sleep: ['(=ᵕ.ᵕ=) z', '(=ᵕ.ᵕ=) zZ'],
-  idle: ['(=^･ｪ･^=)', '(=-ｪ-=)'],
-  working: ['(=^･ω･^=)', '(=^･ω･^=)ﾉ'],
-  alert: ['(=ↀωↀ=)!', '(=ↀωↀ=)!!'],
-  happy: ['(=^▽^=)♪', '(=^▽^=)♥'],
-};
