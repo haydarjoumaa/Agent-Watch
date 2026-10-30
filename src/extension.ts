@@ -2,22 +2,24 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { BuddyViewProvider } from './buddy';
+import { buddyStatus } from './buddyLines';
+import { character, plainHello, spokenAlert } from './characters';
+import { AGENT_LABEL, STATE_LABEL, ago, folderName } from './labels';
 import { AgentState } from './parsers';
+import { inQuietHours } from './quiet';
+import * as naturalVoice from './naturalVoice';
+import { announce, normalizeStyle, setNaturalVoiceDir } from './speech';
+import { detectUserName } from './userName';
 import { Session, SessionWatcher } from './watcher';
 
 const POLL_MS = 2000;
+const ANIMATION_MS = 800;
+const SOUND_COOLDOWN_MS = 30_000;
 // Windows that don't own the session's folder wait this long before trying to claim a notification,
 // so the window that does own it gets to show it.
 const UNOWNED_NOTIFY_DELAY_MS = 1500;
 const CLAIM_DIR = path.join(os.tmpdir(), 'agent-watch-claims');
-
-const AGENT_LABEL = { claude: 'Claude', codex: 'Codex' } as const;
-const STATE_LABEL: Record<AgentState, string> = {
-  working: 'working',
-  needs_approval: 'may need approval',
-  needs_input: 'waiting for you',
-  done: 'finished',
-};
 
 export function activate(context: vscode.ExtensionContext) {
   const config = () => vscode.workspace.getConfiguration('agentWatch');
@@ -32,23 +34,52 @@ export function activate(context: vscode.ExtensionContext) {
   let firstScan = true;
 
   const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
-  status.command = 'agentWatch.showSessions';
+  status.command = 'agentWatch.showBuddy';
   status.show();
 
-  const render = () => {
-    const waiting = sessions.filter((s) => s.state === 'needs_approval' || s.state === 'needs_input');
-    const working = sessions.filter((s) => s.state === 'working').length;
-    const mute = muted ? '$(bell-slash) ' : '';
-    if (waiting.length > 0) {
-      status.text = `${mute}$(bell-dot) ${waiting.length} agent${waiting.length > 1 ? 's' : ''} waiting`;
-      status.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
-    } else {
-      status.text = working > 0 ? `${mute}$(sync~spin) ${working} working` : `${mute}$(check) Agents idle`;
-      status.backgroundColor = undefined;
+  const toggleMute = async () => {
+    muted = !muted;
+    await context.globalState.update('muted', muted);
+    render();
+    vscode.window.showInformationMessage(`Agent Watch alerts ${muted ? 'muted' : 'on'}.`);
+  };
+
+  const voiceStyle = () => normalizeStyle(config().get<string>('voice'));
+  const buddyChar = () => character(config().get<string>('buddy', 'cat'));
+  const volume = () => config().get<number>('volume', 30) / 100;
+  const detectedName = detectUserName();
+  // What the buddy calls you: the setting if given, else your Git name. "-" means don't use a name.
+  const userName = () => {
+    const set = config().get<string>('userName', '').trim();
+    return set === '-' ? '' : set || detectedName;
+  };
+  let lastSoundAt = 0;
+  const onPoke = () => {
+    if (!muted && config().get<boolean>('speakAloud', true) && voiceStyle() !== 'plain') {
+      const c = buddyChar();
+      announce(c.sounds.poke, '', 'sound', c.voice, volume());
     }
+  };
+
+  const buddy = new BuddyViewProvider(context.extensionUri, { openFolder, toggleMute, onPoke });
+
+  // The status bar cat is always visible; its face alternates between two frames.
+  let frame = 0;
+  const renderStatus = () => {
+    const { mood, short } = buddyStatus(sessions);
+    const mute = muted ? '$(bell-slash) ' : '';
+    status.text = `${mute}${buddyChar().faces[mood][frame]} ${short}`;
+    status.backgroundColor =
+      mood === 'alert' ? new vscode.ThemeColor('statusBarItem.warningBackground') : undefined;
+  };
+
+  const render = () => {
+    renderStatus();
     status.tooltip = sessions.length
-      ? sessions.map((s) => `${AGENT_LABEL[s.agent]} · ${folderName(s)} · ${STATE_LABEL[s.state]}`).join('\n')
-      : 'No active Claude Code or Codex sessions';
+      ? sessions.map((s) => `${AGENT_LABEL[s.agent]} · ${folderName(s)} · ${STATE_LABEL[s.state]}`).join('\n') +
+        '\n\nClick to see the big cat'
+      : 'No active Claude Code or Codex sessions. Click to see the big cat';
+    buddy.update(sessions, muted);
   };
 
   const tick = () => {
@@ -78,6 +109,25 @@ export function activate(context: vscode.ExtensionContext) {
     const claimId = `${s.key}-${s.state}-${Math.floor(s.lastActivity)}`;
     const show = () => {
       if (!claim(claimId)) return; // another window already showed it
+      // Approvals and questions block the agent, so they always make a sound. "Finished" stays
+      // quiet when you're already looking at the window where that agent runs.
+      const watching =
+        s.state === 'done' &&
+        owned &&
+        vscode.window.state.focused &&
+        config().get<boolean>('quietWhenWatching', true);
+      const quietTime = inQuietHours(config().get<string>('quietHours', ''));
+      // Approvals always get through; anything else waits for a quiet gap since the last sound.
+      const tooSoon = s.state !== 'needs_approval' && Date.now() - lastSoundAt < SOUND_COOLDOWN_MS;
+      if (config().get<boolean>('speakAloud', true) && !watching && !quietTime && !tooSoon) {
+        lastSoundAt = Date.now();
+        const style = voiceStyle();
+        const c = buddyChar();
+        // "Finished" is good news, not urgent: just the character's sound, no words.
+        const text = s.state === 'done' && style !== 'plain' ? '' : spokenAlert(s, style === 'plain' ? undefined : c, userName());
+        if (s.state !== 'working') announce(c.sounds[s.state], text, style, c.voice, volume());
+      }
+      if (!config().get<boolean>('showPopups', true)) return;
       const msg = `${AGENT_LABEL[s.agent]} ${STATE_LABEL[s.state]} — ${folderName(s)}`;
       const actions = owned || !s.cwd ? [] : ['Open project'];
       vscode.window.showInformationMessage(msg, ...actions).then((choice) => {
@@ -89,12 +139,73 @@ export function activate(context: vscode.ExtensionContext) {
   };
 
   const timer = setInterval(tick, POLL_MS);
+  const animation = setInterval(() => {
+    frame = 1 - frame;
+    renderStatus();
+  }, ANIMATION_MS);
   cleanupClaims();
+
+  // Natural voice (Piper): lives in the extension's storage so updates don't re-download it.
+  const voiceDir = path.join(context.globalStorageUri.fsPath, 'natural-voice');
+  const applyVoiceSetting = () =>
+    setNaturalVoiceDir(config().get<boolean>('naturalVoice', true) ? voiceDir : undefined);
+  applyVoiceSetting();
+
+  let installing = false;
+  const installVoice = async () => {
+    if (installing) return;
+    if (!naturalVoice.isSupported()) {
+      vscode.window.showWarningMessage('Agent Watch: the natural voice is not available for this system.');
+      return;
+    }
+    installing = true;
+    try {
+      await vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title: 'Agent Watch: installing natural voice' },
+        (progress) => naturalVoice.install(voiceDir, (message) => progress.report({ message })),
+      );
+      await config().update('naturalVoice', true, vscode.ConfigurationTarget.Global);
+      applyVoiceSetting();
+      vscode.commands.executeCommand('agentWatch.testVoice');
+    } catch (err) {
+      vscode.window.showErrorMessage(`Agent Watch: couldn't install the natural voice. ${(err as Error).message}`);
+    } finally {
+      installing = false;
+    }
+  };
+
+  // Offer it once, to people who use the voice at all.
+  if (
+    naturalVoice.isSupported() &&
+    !naturalVoice.isInstalled(voiceDir) &&
+    config().get<boolean>('speakAloud', true) &&
+    voiceStyle() !== 'sound' &&
+    !context.globalState.get<boolean>('naturalVoiceOffered')
+  ) {
+    context.globalState.update('naturalVoiceOffered', true);
+    vscode.window
+      .showInformationMessage(
+        'Agent Watch: install a clearer, natural-sounding voice? (one-time download, about 90 MB)',
+        'Install',
+        'Not now',
+      )
+      .then((choice) => {
+        if (choice === 'Install') installVoice();
+      });
+  }
   tick();
 
   context.subscriptions.push(
     status,
     { dispose: () => clearInterval(timer) },
+    { dispose: () => clearInterval(animation) },
+    vscode.window.registerWebviewViewProvider(BuddyViewProvider.viewId, buddy),
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (!e.affectsConfiguration('agentWatch')) return;
+      applyVoiceSetting();
+      render();
+    }),
+    vscode.commands.registerCommand('agentWatch.installNaturalVoice', installVoice),
     vscode.commands.registerCommand('agentWatch.showSessions', async () => {
       if (sessions.length === 0) {
         vscode.window.showInformationMessage('Agent Watch: no active Claude Code or Codex sessions.');
@@ -111,20 +222,20 @@ export function activate(context: vscode.ExtensionContext) {
       );
       if (pick?.session.cwd) openFolder(pick.session.cwd);
     }),
-    vscode.commands.registerCommand('agentWatch.toggleMute', async () => {
-      muted = !muted;
-      await context.globalState.update('muted', muted);
-      render();
-      vscode.window.showInformationMessage(`Agent Watch notifications ${muted ? 'muted' : 'on'}.`);
+    vscode.commands.registerCommand('agentWatch.toggleMute', toggleMute),
+    vscode.commands.registerCommand('agentWatch.showBuddy', () =>
+      vscode.commands.executeCommand(`${BuddyViewProvider.viewId}.focus`),
+    ),
+    vscode.commands.registerCommand('agentWatch.testVoice', () => {
+      const style = voiceStyle();
+      const c = buddyChar();
+      const text = style === 'plain' ? plainHello(userName()) : c.hello(userName());
+      announce(c.sounds.hello, text, style, c.voice, volume());
     }),
   );
 }
 
 export function deactivate() {}
-
-function folderName(s: Session): string {
-  return s.cwd ? path.basename(s.cwd) : s.sessionId.slice(0, 8);
-}
 
 function stateIcon(state: AgentState): string {
   switch (state) {
@@ -137,13 +248,6 @@ function stateIcon(state: AgentState): string {
     default:
       return '$(sync)';
   }
-}
-
-function ago(ms: number): string {
-  const sec = Math.max(0, Math.round((Date.now() - ms) / 1000));
-  if (sec < 60) return `${sec}s ago`;
-  const min = Math.round(sec / 60);
-  return min < 60 ? `${min}m ago` : `${Math.round(min / 60)}h ago`;
 }
 
 function ownsFolder(cwd?: string): boolean {

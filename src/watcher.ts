@@ -10,6 +10,7 @@ import {
   parseClaude,
   parseCodex,
 } from './parsers';
+import { approvalPossible } from './permissions';
 
 export interface Session {
   key: string;
@@ -97,6 +98,14 @@ function idFromFilename(file: string): string {
   return uuid ? uuid[0] : base;
 }
 
+function safeApprovalPossible(...args: Parameters<typeof approvalPossible>): boolean {
+  try {
+    return approvalPossible(...args);
+  } catch {
+    return true; // can't tell: keep the alert
+  }
+}
+
 function parseFile(agent: AgentKind, file: string, size: number): ParsedSession | null {
   const start = Math.max(0, size - TAIL_BYTES);
   const tail = readRange(file, start, size - start);
@@ -149,12 +158,18 @@ export class SessionWatcher {
         const key = `${p.agent}:${p.sessionId}`;
         const existing = sessions.get(key);
         if (existing && existing.lastActivity >= stat.mtimeMs) continue;
+        const quietMs = now - stat.mtimeMs;
+        // Only consult permission rules once a call has been pending long enough to matter.
+        const askable =
+          p.phase === 'tool_pending' && quietMs >= approvalDelayMs
+            ? safeApprovalPossible(p.agent, p.pending, p.mode, p.cwd)
+            : true;
         sessions.set(key, {
           key,
           agent: p.agent,
           sessionId: p.sessionId,
           cwd: p.cwd,
-          state: deriveState(p.phase, now - stat.mtimeMs, approvalDelayMs),
+          state: deriveState(p.phase, quietMs, approvalDelayMs, askable),
           lastActivity: stat.mtimeMs,
         });
       }

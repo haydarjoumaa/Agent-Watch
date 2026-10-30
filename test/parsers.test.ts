@@ -25,7 +25,8 @@ const endTurn = {
 describe('parseClaude', () => {
   it('reports a pending tool call', () => {
     const p = parseClaude(jsonl(prompt, toolUse('t1')), 'file-id');
-    expect(p).toEqual({ agent: 'claude', sessionId: 'abc', cwd, phase: 'tool_pending' });
+    expect(p).toMatchObject({ agent: 'claude', sessionId: 'abc', cwd, phase: 'tool_pending' });
+    expect(p?.pending).toEqual([{ name: 'Bash', input: {} }]);
   });
 
   it('clears the pending call once its result arrives', () => {
@@ -72,7 +73,7 @@ const turnCtx = (policy: string) => ({ type: 'turn_context', payload: { cwd, app
 describe('parseCodex', () => {
   it('reads session id and cwd from session_meta', () => {
     const meta = { type: 'session_meta', payload: { session_id: 'sess', cwd } };
-    expect(parseCodex(jsonl(meta, ev('task_started')), 'f')).toEqual({
+    expect(parseCodex(jsonl(meta, ev('task_started')), 'f')).toMatchObject({
       agent: 'codex', sessionId: 'sess', cwd, phase: 'working',
     });
   });
@@ -89,8 +90,21 @@ describe('parseCodex', () => {
     expect(parseCodex(jsonl(turnCtx('on-request'), ev('task_started'), call('c1')), 'f')?.phase).toBe('tool_pending');
   });
 
-  it('never reports approval when the approval policy is "never"', () => {
-    expect(parseCodex(jsonl(turnCtx('never'), ev('task_started'), call('c1')), 'f')?.phase).toBe('working');
+  it('records the approval policy and parses call arguments', () => {
+    const exec = { type: 'response_item', payload: { type: 'function_call', call_id: 'e1', name: 'exec_command', arguments: '{"cmd":"npm install","sandbox_permissions":"require_escalated"}' } };
+    const p = parseCodex(jsonl(turnCtx('on-request'), ev('task_started'), exec), 'f');
+    expect(p?.mode).toBe('on-request');
+    expect(p?.pending).toEqual([{ name: 'exec_command', input: { cmd: 'npm install', sandbox_permissions: 'require_escalated' } }]);
+  });
+
+  it('treats request_user_input as waiting for the user', () => {
+    const ask = { type: 'response_item', payload: { type: 'function_call', call_id: 'q1', name: 'request_user_input', arguments: '{}' } };
+    expect(parseCodex(jsonl(ev('task_started'), ask), 'f')?.phase).toBe('needs_input');
+  });
+
+  it('does not count polling calls as pending', () => {
+    const wait = { type: 'response_item', payload: { type: 'function_call', call_id: 'w1', name: 'wait', arguments: '{}' } };
+    expect(parseCodex(jsonl(ev('task_started'), wait), 'f')?.phase).toBe('working');
   });
 
   it('uses fallbacks when the head of the file was not in the tail', () => {
@@ -113,6 +127,7 @@ describe('deriveState', () => {
   it('waits for the approval delay before flagging approval', () => {
     expect(deriveState('tool_pending', 1000, 5000)).toBe('working');
     expect(deriveState('tool_pending', 6000, 5000)).toBe('needs_approval');
+    expect(deriveState('tool_pending', 6000, 5000, false)).toBe('working');
   });
 
   it('maps the other phases directly', () => {

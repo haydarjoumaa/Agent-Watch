@@ -1,18 +1,42 @@
 {
   "name": "agent-watch",
   "displayName": "Agent Watch",
-  "description": "Tells you when Claude Code or Codex needs your attention. Zero setup: reads the agents' local session logs.",
-  "version": "0.1.0",
+  "description": "A little cat, gym coach or robot that tells you when Claude Code or Codex needs your attention. Zero setup.",
+  "version": "0.7.0",
   "publisher": "local",
   "license": "UNLICENSED",
-  "engines": { "vscode": "^1.90.0" },
-  "categories": ["Other"],
-  "activationEvents": ["onStartupFinished"],
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
-      { "command": "agentWatch.showSessions", "title": "Agent Watch: Show Agent Sessions" },
-      { "command": "agentWatch.toggleMute", "title": "Agent Watch: Mute/Unmute Notifications" }
+      {
+        "command": "agentWatch.showSessions",
+        "title": "Agent Watch: Show Agent Sessions"
+      },
+      {
+        "command": "agentWatch.toggleMute",
+        "title": "Agent Watch: Mute/Unmute Notifications"
+      },
+      {
+        "command": "agentWatch.showBuddy",
+        "title": "Agent Watch: Show Buddy"
+      },
+      {
+        "command": "agentWatch.testVoice",
+        "title": "Agent Watch: Test Buddy Voice"
+      },
+      {
+        "command": "agentWatch.installNaturalVoice",
+        "title": "Agent Watch: Install Natural Voice"
+      }
     ],
     "configuration": {
       "title": "Agent Watch",
@@ -32,9 +56,87 @@
         "agentWatch.notifyWhenFinished": {
           "type": "boolean",
           "default": true,
-          "description": "Also notify when an agent finishes its turn (not only when it needs approval or input)."
+          "description": "Also alert when an agent finishes its turn (a soft meow and a pop-up, no spoken words)."
+        },
+        "agentWatch.buddy": {
+          "type": "string",
+          "enum": [
+            "cat",
+            "coach",
+            "robot"
+          ],
+          "enumDescriptions": [
+            "A friendly cat: meows and purrs",
+            "A gym coach: lifts weights while agents work, blows the whistle when they need you",
+            "A robot: beeps and boops"
+          ],
+          "default": "cat",
+          "description": "Which character watches your agents for you."
+        },
+        "agentWatch.speakAloud": {
+          "type": "boolean",
+          "default": true,
+          "description": "Play sound alerts (meow and/or voice, see Voice setting)."
+        },
+        "agentWatch.showPopups": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show VS Code pop-up notifications for alerts."
+        },
+        "agentWatch.voice": {
+          "type": "string",
+          "enum": [
+            "character",
+            "sound",
+            "plain"
+          ],
+          "enumDescriptions": [
+            "The character's sound, then its voice (cat: meow, coach: whistle, robot: beeps)",
+            "Only the character's sound, no words",
+            "Normal computer voice, no sound effects"
+          ],
+          "default": "character",
+          "description": "How your buddy sounds when it alerts you."
+        },
+        "agentWatch.quietWhenWatching": {
+          "type": "boolean",
+          "default": true,
+          "description": "Don't play the \"finished\" sound when you are already looking at the VS Code window where that agent runs. Approvals and questions always make a sound."
+        },
+        "agentWatch.quietHours": {
+          "type": "string",
+          "default": "",
+          "pattern": "^$|^\\d{1,2}:\\d{2}-\\d{1,2}:\\d{2}$",
+          "patternErrorMessage": "Use HH:MM-HH:MM, e.g. 22:00-08:00, or leave empty.",
+          "markdownDescription": "No voice during these hours, e.g. `22:00-08:00`. Leave empty to turn off. Pop-ups and the cat still update."
+        },
+        "agentWatch.volume": {
+          "type": "number",
+          "default": 30,
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Volume of the meow and cat voice, 0–100."
+        },
+        "agentWatch.userName": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "What your buddy calls you. Leave empty to use the first name from your Git `user.name`; set to `-` to not use a name."
+        },
+        "agentWatch.naturalVoice": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Use the natural-sounding voice (Piper) once installed with **Agent Watch: Install Natural Voice**. Turn off to use your system voice."
         }
       }
+    },
+    "views": {
+      "explorer": [
+        {
+          "type": "webview",
+          "id": "agentWatch.buddy",
+          "name": "Agent Cat"
+        }
+      ]
     }
   },
   "scripts": {
